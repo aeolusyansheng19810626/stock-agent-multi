@@ -3,6 +3,7 @@ import glob
 import streamlit as st
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage, SystemMessage
 from tools import get_stock_data, search_web, get_stock_history, send_email_report, search_documents
+from components.stock_ticker import render_stock_ticker
 
 # ====== API Keys ======
 from dotenv import load_dotenv
@@ -821,6 +822,11 @@ with st.sidebar:
         if st.button(gemini_label, use_container_width=True, disabled=not st.session_state.gemini_exhausted):
             st.session_state.gemini_exhausted = False
             st.rerun()
+
+    st.markdown('<div class="sidebar-divider"></div>', unsafe_allow_html=True)
+    st.markdown('<div class="sidebar-section"><div class="sidebar-section-title">📡 实时股价</div></div>',
+                unsafe_allow_html=True)
+    render_stock_ticker()
 
     st.markdown('<div class="sidebar-divider"></div>', unsafe_allow_html=True)
     st.markdown('<div class="sidebar-section"><div class="sidebar-section-title">📄 财报文档</div></div>',
