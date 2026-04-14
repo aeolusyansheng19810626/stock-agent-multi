@@ -11,6 +11,7 @@ from google.auth.transport.requests import Request
 
 VECTORSTORE_DIR = "./vectorstore"
 _embeddings = None
+_vectorstore = None
 
 def get_embeddings():
     global _embeddings
@@ -23,6 +24,23 @@ def get_embeddings():
             model_name="paraphrase-multilingual-MiniLM-L12-v2"
         )
     return _embeddings
+
+def get_vectorstore():
+    """返回缓存的 Chroma 实例，向量库有更新时调用此函数重新加载"""
+    global _vectorstore
+    if _vectorstore is None and os.path.exists(VECTORSTORE_DIR) and any(os.scandir(VECTORSTORE_DIR)):
+        from langchain_community.vectorstores import Chroma
+        _vectorstore = Chroma(
+            persist_directory=VECTORSTORE_DIR,
+            embedding_function=get_embeddings(),
+            collection_name="stockai_docs",
+        )
+    return _vectorstore
+
+def invalidate_vectorstore():
+    """上传新文档后调用，让下次检索重新加载"""
+    global _vectorstore
+    _vectorstore = None
 
 
 from dotenv import load_dotenv
@@ -69,6 +87,7 @@ def search_web(query: str) -> str:
 @tool
 def get_stock_history(ticker: str, period: str = "6mo") -> str:
     """获取股票历史价格并画出走势图。ticker 是股票代码，period 是时间范围：1mo/3mo/6mo/1y/2y。"""
+    os.makedirs("charts", exist_ok=True)
     stock = yf.Ticker(ticker)
     hist = stock.history(period=period)
     if hist.empty:
@@ -101,16 +120,10 @@ def search_documents(query: str) -> str:
     """从已上传的财报PDF中检索相关内容。当用户询问具体财务数据、
     营收、利润、季报、年报等信息时优先使用此工具。
     如果返回内容为空，说明没有上传相关文档。"""
-    if not os.path.exists(VECTORSTORE_DIR):
+    vectorstore = get_vectorstore()
+    if vectorstore is None:
         return "暂无上传文档，请先在侧边栏上传财报 PDF。"
     try:
-        from langchain_community.vectorstores import Chroma
-        embeddings = get_embeddings()
-        vectorstore = Chroma(
-            persist_directory=VECTORSTORE_DIR,
-            embedding_function=embeddings,
-            collection_name="stockai_docs",
-        )
         docs = vectorstore.similarity_search(query, k=3)
         if not docs:
             return "文档库中未找到相关内容。"

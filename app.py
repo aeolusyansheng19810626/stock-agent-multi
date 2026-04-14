@@ -61,14 +61,34 @@ def extract_text(content) -> str:
     return str(content)
 
 # ====== 处理上传 PDF，写入向量库 ======
+_PROCESSED_JSON = "./vectorstore/processed_files.json"
+
+def _load_processed_registry() -> dict:
+    """从磁盘读取已处理文件记录，跨会话持久化"""
+    if os.path.exists(_PROCESSED_JSON):
+        import json as _json
+        with open(_PROCESSED_JSON, "r", encoding="utf-8") as f:
+            return _json.load(f)
+    return {}
+
+def _save_processed_registry(registry: dict):
+    os.makedirs(os.path.dirname(_PROCESSED_JSON), exist_ok=True)
+    import json as _json
+    with open(_PROCESSED_JSON, "w", encoding="utf-8") as f:
+        _json.dump(registry, f, ensure_ascii=False, indent=2)
+
 def process_uploaded_pdfs(files):
     import tempfile
     from langchain_community.document_loaders import PyPDFLoader
     from langchain_text_splitters import RecursiveCharacterTextSplitter
     from langchain_community.vectorstores import Chroma
-    from tools import get_embeddings, VECTORSTORE_DIR
+    from tools import get_embeddings, VECTORSTORE_DIR, invalidate_vectorstore
 
-    new_files = [f for f in files if f.name not in st.session_state.processed_docs]
+    # 磁盘持久化去重（重启后仍有效）
+    registry = _load_processed_registry()
+    new_files = [f for f in files if f.name not in registry]
+    # 同步到 session_state 展示
+    st.session_state.processed_docs = registry
     if not new_files:
         return
 
@@ -77,8 +97,7 @@ def process_uploaded_pdfs(files):
         embeddings = get_embeddings()
         vectorstore = None
         if os.path.exists(VECTORSTORE_DIR) and any(os.scandir(VECTORSTORE_DIR)):
-            from langchain_community.vectorstores import Chroma as _C
-            vectorstore = _C(
+            vectorstore = Chroma(
                 persist_directory=VECTORSTORE_DIR,
                 embedding_function=embeddings,
                 collection_name="stockai_docs",
@@ -102,9 +121,13 @@ def process_uploaded_pdfs(files):
                     )
                 else:
                     vectorstore.add_documents(chunks)
-                st.session_state.processed_docs[file.name] = len(chunks)
+                registry[file.name] = len(chunks)
+                st.session_state.processed_docs = dict(registry)
             finally:
                 os.unlink(tmp_path)
+
+        _save_processed_registry(registry)
+        invalidate_vectorstore()  # 让 search_documents 重新加载最新向量库
 
 # ====== 初始化 LLM 和工具（按模型缓存） ======
 @st.cache_resource
@@ -766,7 +789,7 @@ if "gemini_exhausted" not in st.session_state:
 if "dev_mode" not in st.session_state:
     st.session_state.dev_mode = False
 if "processed_docs" not in st.session_state:
-    st.session_state.processed_docs = {}  # filename -> chunk_count
+    st.session_state.processed_docs = _load_processed_registry()
 
 # ====== 侧边栏 ======
 with st.sidebar:

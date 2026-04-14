@@ -37,13 +37,17 @@ stock-agent/
 ├── app.py              # Streamlit Web UI（主程序）
 ├── main.py             # 命令行版本
 ├── tools.py            # 工具定义（不要修改）
+├── components/
+│   └── stock_ticker.py # 实时股价侧边栏组件
 ├── skills/             # 工具使用说明（注入 system prompt）
 │   ├── skill_get_stock_data.md
 │   ├── skill_get_stock_history.md
 │   ├── skill_search_web.md
 │   └── skill_send_email.md
-├── charts/             # 走势图输出目录（运行时自动生成）
+├── charts/             # 走势图输出目录（运行时自动创建）
+├── vectorstore/        # ChromaDB 向量库（运行时自动创建，不上传 git）
 ├── .env                # API Keys（不上传 git，参考 .env.example）
+├── .env.example        # API Keys 模板
 ├── token.pickle        # Gmail OAuth 凭证（不上传 git）
 └── requirements.txt
 ```
@@ -52,7 +56,7 @@ stock-agent/
 
 ## API Keys
 
-所有 key 存放在项目根目录的 `.env` 文件中（不上传 git）。
+所有 key 存放在项目根目录的 `.env` 文件中（不上传 git），通过 `python-dotenv` 读取。
 
 ```
 GROQ_API_KEY=your_groq_api_key
@@ -60,7 +64,7 @@ GEMINI_API_KEY=your_gemini_api_key
 TAVILY_API_KEY=your_tavily_api_key
 ```
 
-换机器时，参考 `.env.example` 创建 `.env` 并填入对应的 key。
+换机器时，参考 `.env.example` 创建 `.env` 并填入对应的 key。代码中通过 `os.getenv()` 读取，不会硬编码在源文件里。
 
 ---
 
@@ -117,6 +121,12 @@ Groq 降级兜底
 ### `get_stock_history(ticker, period)`
 - period 可选：`1mo` / `3mo` / `6mo` / `1y` / `2y`
 - 走势图保存到 `charts/` 目录，Streamlit 页面自动显示
+
+### `search_documents(query)`
+- 从已上传的财报 PDF 中检索相关内容
+- 向量库持久化到 `./vectorstore`，重启后不丢失
+- 嵌入模型：`paraphrase-multilingual-MiniLM-L12-v2`（支持中文，本地运行）
+- 首次上传 PDF 时会自动下载模型（约 120MB）
 
 ### `send_email_report(to, subject, body)`
 - 通过 Gmail API 发送

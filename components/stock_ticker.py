@@ -32,9 +32,9 @@ def _fetch_prices(tickers: list[str]) -> dict:
         return {}
 
 
-@st.fragment(run_every=1)
+@st.fragment(run_every=30)
 def render_stock_ticker():
-    """侧边栏实时股价卡片，每秒局部刷新"""
+    """侧边栏实时股价卡片，每30秒局部刷新"""
 
     # ── 用户输入股票列表 ──
     raw = st.text_input(
@@ -71,6 +71,7 @@ def render_stock_ticker():
         color      = "#00C087" if is_up else "#F5475B"
         arrow      = "▲" if is_up else "▼"
         sign       = "+" if is_up else ""
+        currency   = "¥" if ticker.endswith(".T") else "$"
 
         st.markdown(f"""
 <div style="
@@ -88,7 +89,7 @@ def render_stock_ticker():
         </span>
     </div>
     <div style="display:flex;justify-content:space-between;align-items:center;margin-top:2px;">
-        <span style="font-size:0.95rem;font-weight:800;color:#1D2129;">${price:.2f}</span>
+        <span style="font-size:0.95rem;font-weight:800;color:#1D2129;">{currency}{price:.2f}</span>
         <span style="font-size:0.72rem;color:{color};">{sign}{change:.2f}</span>
     </div>
 </div>
