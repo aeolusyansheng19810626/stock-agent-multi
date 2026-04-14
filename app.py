@@ -63,7 +63,7 @@ def extract_text(content) -> str:
 def process_uploaded_pdfs(files):
     import tempfile
     from langchain_community.document_loaders import PyPDFLoader
-    from langchain.text_splitter import RecursiveCharacterTextSplitter
+    from langchain_text_splitters import RecursiveCharacterTextSplitter
     from langchain_community.vectorstores import Chroma
     from tools import get_embeddings, VECTORSTORE_DIR
 
