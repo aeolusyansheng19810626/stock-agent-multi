@@ -117,9 +117,10 @@ def get_stock_history(ticker: str, period: str = "6mo") -> str:
 
 @tool
 def search_documents(query: str) -> str:
-    """从已上传的财报PDF中检索相关内容。当用户询问具体财务数据、
-    营收、利润、季报、年报等信息时优先使用此工具。
-    如果返回内容为空，说明没有上传相关文档。"""
+    """【优先调用】从已上传的财报PDF中检索相关内容。
+    用户询问财报、营收、利润、EPS、毛利率、季报、年报等财务数据时，必须首先调用此工具，不得跳过。
+    返回内容为空时才允许改用 search_web。
+    如果没有上传任何文档，会返回提示信息。"""
     vectorstore = get_vectorstore()
     if vectorstore is None:
         return "暂无上传文档，请先在侧边栏上传财报 PDF。"
