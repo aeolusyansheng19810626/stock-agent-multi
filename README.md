@@ -21,6 +21,8 @@ pip install langchain-groq langchain-google-genai streamlit
 ### 启动 Web UI
 ```bash
 venv\Scripts\streamlit.exe run app.py
+# 或（PATH 不含 streamlit 时）
+python -m streamlit run app.py
 ```
 
 ### 启动命令行版
@@ -33,10 +35,17 @@ python main.py
 ## 项目结构
 
 ```
-stock-agent/
+stock-agent-multi/
 ├── app.py              # Streamlit Web UI（主程序）
 ├── main.py             # 命令行版本
 ├── tools.py            # 工具定义（不要修改）
+├── agents/             # 多 Agent 模块
+│   ├── __init__.py
+│   ├── orchestrator.py # 任务调度器：解析意图，并行派发，汇总结果
+│   ├── data_agent.py   # 股价 Agent：get_stock_data / get_stock_history
+│   ├── news_agent.py   # 新闻 Agent：search_web
+│   ├── rag_agent.py    # 财报 Agent：search_documents
+│   └── report_agent.py # 报告 Agent：Gemini/Groq 生成最终分析
 ├── components/
 │   └── stock_ticker.py # 实时股价侧边栏组件
 ├── skills/             # 工具使用说明（注入 system prompt）
@@ -68,27 +77,31 @@ TAVILY_API_KEY=your_tavily_api_key
 
 ---
 
-## 双模型架构
+## 多 Agent 架构
 
 ```
 用户提问
    ↓
-Groq（工具调用循环）
-   ├─ 调用 get_stock_data
-   ├─ 调用 search_web
-   ├─ 调用 get_stock_history
-   └─ 调用 send_email_report
+Orchestrator（Groq 解析意图，输出调度计划）
    ↓
-Gemini（生成最终分析报告）
+┌──────────────────────────────────────┐
+│  ThreadPoolExecutor 并行执行          │
+│  ├─ data_agent   → 股价 / 走势图      │
+│  ├─ news_agent   → 网络新闻           │
+│  └─ rag_agent    → 财报文档检索        │
+└──────────────────────────────────────┘
+   ↓
+report_agent（Gemini 生成最终报告）
    ↓（429 限速）
 等待 65 秒重试
    ↓（重试仍 429）
 Groq 降级兜底
 ```
 
-- **Groq**：负责多步工具调用，无日配额限制
-- **Gemini 2.5 Flash**：负责生成最终高质量报告
-- **Gemini 返回空内容**：自动降级到 Groq
+- **Orchestrator**：Groq 解析用户意图，决定调用哪些 agent 及参数
+- **data / news / rag agent**：纯工具包装，无 LLM，并行执行
+- **report_agent**：Gemini 2.5 Flash 优先，429 自动降级 Groq
+- **dev_mode**：开启后全程使用 Groq，跳过 Gemini
 
 ---
 
@@ -148,7 +161,7 @@ Groq 降级兜底
 
 ## System Prompt 编写经验
 
-本项目用 Groq（LLaMA）负责工具调用，LLaMA 对指令的遵循能力相对较弱，system prompt 的措辞对工具选择行为影响很大。
+本项目 Orchestrator 用 Groq（LLaMA）负责意图解析，LLaMA 对指令的遵循能力相对较弱，system prompt 的措辞对工具选择行为影响很大。
 
 ### 各模型遵循指令能力对比
 
