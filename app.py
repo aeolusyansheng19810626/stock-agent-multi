@@ -1005,8 +1005,6 @@ if typed:
     user_input = typed
 
 if user_input:
-    groq_llm, groq_with_tools, gemini_with_tools, tools_map = init_agents()
-
     with st.chat_message("user"):
         st.markdown(user_input)
     st.session_state.messages.append({"role": "user", "content": user_input})
@@ -1015,107 +1013,53 @@ if user_input:
     charts_before = set(glob.glob("charts/*.png"))
 
     try:
-        # ====== Agent 执行循环 ======
-        # Groq 负责决策（调用工具），Gemini 负责生成最终报告
-        step = 1
-        MAX_STEPS = 5
+        # ====== 多 Agent 执行 ======
+        from agents.orchestrator import run as orchestrator_run
 
         TOOL_LABEL = {
-            "get_stock_data": "获取股票实时数据",
-            "search_web": "搜索网络新闻",
+            "get_stock_data":    "获取股票实时数据",
+            "search_web":        "搜索网络新闻",
             "get_stock_history": "获取历史走势图",
-            "search_documents": "检索财报文档",
+            "search_documents":  "检索财报文档",
             "send_email_report": "发送邮件报告",
         }
 
         with st.status("AI 正在分析…", expanded=True) as status_box:
-            while step <= MAX_STEPS:
-                messages = [SystemMessage(content=system_prompt)] + st.session_state.chat_history
+            result = orchestrator_run(
+                user_query=user_input,
+                chat_history=st.session_state.chat_history,
+                dev_mode=st.session_state.dev_mode,
+                gemini_exhausted=st.session_state.gemini_exhausted,
+                status_callback=lambda msg: status_box.update(label=msg),
+            )
 
-                status_box.update(label=f"正在思考（第 {step} 步）…")
-                # 用 Groq 判断是否还需要调用工具
-                groq_response = groq_with_tools.invoke(messages)
+            # Gemini 日配额耗尽时更新状态
+            if result.get("gemini_exhausted"):
+                st.session_state.gemini_exhausted = True
+                st.warning("Gemini 日配额已用完，已切换至 Groq 模式（下午 4 点后点击侧边栏按钮恢复）")
 
-                if groq_response.tool_calls:
-                    st.session_state.chat_history.append(groq_response)
+            # 显示各工具调用步骤
+            for i, tc in enumerate(result["tool_calls"], 1):
+                tool_label = TOOL_LABEL.get(tc["tool_name"], tc["tool_name"])
+                st.write(f"🔧 **Step {i}** · `{tc['tool_name']}` — {tc['tool_args']}")
+                st.session_state.messages.append({
+                    "role": "tool",
+                    "step": i,
+                    "tool_name": tc["tool_name"],
+                    "tool_args": tc["tool_args"],
+                    "content": "",
+                })
 
-                    for tool_call in groq_response.tool_calls:
-                        tool_name = tool_call["name"]
-                        tool_args = tool_call["args"]
-                        tool_label = TOOL_LABEL.get(tool_name, tool_name)
+            final_response = result["final_response"]
+            final_model    = result["final_model"]
 
-                        status_box.update(label=f"Step {step} · {tool_label}…")
-                        st.write(f"🔧 **Step {step}** · `{tool_name}` — {tool_args}")
+            st.session_state.chat_history.append(AIMessage(content=final_response))
+            with st.chat_message("assistant"):
+                st.markdown(final_response)
+                st.caption(f"⚠️ 以上内容仅供参考，不构成投资建议。　　由 {final_model} 生成")
+            st.session_state.messages.append({"role": "assistant", "content": final_response, "model": final_model})
 
-                        st.session_state.messages.append({
-                            "role": "tool",
-                            "step": step,
-                            "tool_name": tool_name,
-                            "tool_args": tool_args,
-                            "content": "",
-                        })
-
-                        result = tools_map[tool_name].invoke(tool_args)
-                        step += 1
-
-                        st.session_state.chat_history.append(ToolMessage(
-                            content=str(result),
-                            tool_call_id=tool_call["id"]
-                        ))
-                else:
-                    # 工具调用完毕，交给 Gemini 生成最终报告；限速时重试，每日配额耗尽时降级到 Groq
-                    import time
-                    from langchain_google_genai.chat_models import ChatGoogleGenerativeAIError
-                    messages = [SystemMessage(content=system_prompt)] + st.session_state.chat_history
-                    final_response = None
-
-                    final_model = None
-                    if st.session_state.dev_mode or st.session_state.gemini_exhausted:
-                        # 开发模式或日配额耗尽，直接走 Groq（不带工具，避免模型继续调用工具）
-                        status_box.update(label="正在生成分析报告（Groq）…")
-                        fallback_response = groq_llm.invoke(messages)
-                        final_response = extract_text(fallback_response.content)
-                        final_model = "Groq"
-                    else:
-                        status_box.update(label="正在生成分析报告（Gemini）…")
-                        for attempt in range(2):  # 最多重试1次
-                            try:
-                                final_response_obj = gemini_with_tools.invoke(messages)
-                                final_response = extract_text(final_response_obj.content)
-                                final_model = "Gemini"
-                                break
-                            except ChatGoogleGenerativeAIError as e:
-                                err = str(e)
-                                if "429" not in err and "RESOURCE_EXHAUSTED" not in err:
-                                    raise
-                                if attempt == 0:
-                                    # 第一次 429：等待 65 秒后重试（应对 RPM 限速）
-                                    status_box.update(label="Gemini 触发速率限制，65 秒后自动重试…")
-                                    time.sleep(65)
-                                    continue
-                                else:
-                                    # 重试后仍然 429：标记日配额耗尽，降级到 Groq
-                                    st.session_state.gemini_exhausted = True
-                                    st.warning("Gemini 日配额已用完，已切换至 Groq 模式（下午 4 点后点击侧边栏按钮恢复）")
-                                    status_box.update(label="正在生成分析报告（Groq 降级）…")
-                                    fallback_response = groq_llm.invoke(messages)
-                                    final_response = extract_text(fallback_response.content)
-                                    final_model = "Groq"
-                                    break
-                    # 兜底：Gemini 返回空内容时降级到 Groq（不带工具）
-                    if not final_response or not final_response.strip():
-                        status_box.update(label="正在生成分析报告（Groq 兜底）…")
-                        fallback_response = groq_llm.invoke(messages)
-                        final_response = extract_text(fallback_response.content)
-                        final_model = "Groq"
-
-                    status_box.update(label="✅ 分析完成", state="complete", expanded=False)
-                    st.session_state.chat_history.append(AIMessage(content=final_response))
-                    with st.chat_message("assistant"):
-                        st.markdown(final_response)
-                        st.caption(f"⚠️ 以上内容仅供参考，不构成投资建议。　　由 {final_model} 生成")
-                    st.session_state.messages.append({"role": "assistant", "content": final_response, "model": final_model})
-                    break
+            status_box.update(label="✅ 分析完成", state="complete", expanded=False)
 
         # ====== 显示本次新生成的走势图 ======
         charts_after = set(glob.glob("charts/*.png"))
